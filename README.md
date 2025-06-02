@@ -1,4 +1,14 @@
-﻿# Hangfire.Dashboard.Management.v2
+# What Changes in This Fork
+- Support for Classes as Parameters
+- Support for Interfaces as Parameters
+- Nested Class/Interface Support
+
+![image](https://github.com/user-attachments/assets/9428b26c-b32d-4c72-b3b6-64681d0e0ad9)
+![image](https://github.com/user-attachments/assets/f750144f-c6be-4a55-967d-a7e1d08d0104)
+
+
+
+# Hangfire.Dashboard.Management.v2
 
 ![MIT License](https://img.shields.io/badge/license-MIT-orange.svg)
 ![Build Status](https://github.com/lcourson/Hangfire.Dashboard.Management.v2/actions/workflows/Master-Build.yml/badge.svg?branch=master)
