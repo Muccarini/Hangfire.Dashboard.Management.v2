@@ -36,8 +36,7 @@ namespace ASP.Net_Core_Web_Application
 					.UseMemoryStorage()
 					.UseSimpleAssemblyNameTypeSerializer()
 					.UseRecommendedSerializerSettings()
-					.UseManagementPages(typeof(Startup).Assembly, clientSideConfig)
-					;
+					.UseManagementPages(typeof(Startup).Assembly, clientSideConfig);
 			});
 
 			services.AddHangfireServer((options) => {

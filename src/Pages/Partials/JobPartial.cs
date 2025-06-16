@@ -31,40 +31,52 @@ namespace Hangfire.Dashboard.Management.v2.Pages.Partials
 		public override void Execute()
 		{
 			var inputs = string.Empty;
+			int outerDepth = 0;
 
-			foreach (var parameterInfo in Job.MethodInfo.GetParameters())
+			foreach (var parameterInfo in Job.MethodInfo.GetParameters()
+			.Where(par => Attribute.IsDefined(par, typeof(DisplayDataAttribute))))
 			{
+				var input = string.Empty;
+
 				if (parameterInfo.ParameterType == typeof(PerformContext) || parameterInfo.ParameterType == typeof(IJobCancellationToken))
 				{
 					continue;
 				}
 
-				DisplayDataAttribute displayInfo = null;
-				if (parameterInfo.GetCustomAttributes(true).OfType<DisplayDataAttribute>().Any())
-				{
-					displayInfo = parameterInfo.GetCustomAttribute<DisplayDataAttribute>();
-				}
-				else
-				{
-					displayInfo = new DisplayDataAttribute();
-				}
+				DisplayDataAttribute displayInfo = parameterInfo.GetCustomAttribute<DisplayDataAttribute>();
+
+				bool isList = false;
+				Type rootType = parameterInfo.ParameterType;
+				List<Type> innerTypes = new List<Type>();
 
 				var labelText = displayInfo?.Label ?? parameterInfo.Name;
 				var placeholderText = displayInfo?.Placeholder ?? parameterInfo.Name;
 				var myId = $"{JobId}_{parameterInfo.Name}";
-				
-				if(parameterInfo.ParameterType.IsInterface)
-				{
-					if (!VT.Implementations.ContainsKey(parameterInfo.ParameterType)) { inputs += $"<span>No concrete implementation of \"{parameterInfo.ParameterType}\" found in the current assembly.</span>"; continue; }
 
-					var impls = VT.Implementations[parameterInfo.ParameterType];
+				//iterate until (List<List<...<Concrete>> we found a Concrete Type, then processit, at the end we will wrap n-depth times in a panel List
+				while (rootType.IsGenericType && rootType.GetGenericTypeDefinition() == typeof(List<>))
+				{
+					outerDepth++;
+					var elementType = rootType.GetGenericArguments().ToList().FirstOrDefault();
+					isList = true;
+					myId += "_list_0";
+					rootType = elementType;
+					labelText = rootType.Name + " (Element)";
+				}
+
+				if (rootType.IsInterface)
+				{
+					if (!VT.Implementations.ContainsKey(rootType)) { inputs += $"<span>No concrete implementation of \"{rootType}\" found in the current assembly.</span>"; continue; }
+
+					var impls = VT.Implementations[rootType];
 
 					if (impls.Count == 1)
 					{
 						var implType = impls.First();
 						NestedTypes.Add(implType);
-						inputs += $"<div class=\"panel panel-default\"><div class=\"panel-heading\" role=\"button\" data-toggle=\"collapse\" href=\"#collapse_{myId}_{implType.Name}\" aria-expanded=\"false\" 	aria-controls=\"collapse_{myId}_{implType.Name}\"><h4 class=\"panel-title\">{implType.Name} {parameterInfo.Name}</h4></div><div id=\"collapse_{myId}_{implType.Name}\" class=\"panel-collapse collapse\"><div 	class=\"panel-body\">";
-						inputs += InputNested($"{myId}_{implType.Name}", implType);
+						input += $"<div class=\"panel panel-default\"><div class=\"panel-heading\" role=\"button\" data-toggle=\"collapse\" href=\"#collapse_{myId}_{implType.Name}\" aria-expanded=\"false\" 	aria-controls=\"collapse_{myId}_{implType.Name}\"><h4 class=\"panel-title\">{implType.Name} {parameterInfo.Name}</h4></div><div id=\"collapse_{myId}_{implType.Name}\" class=\"panel-collapse collapse\"><div 	class=\"panel-body\">";
+						input += InputProps($"{myId}_{implType.Name}", implType, outerDepth);
+						input += "</div></div></div>";
 						NestedTypes.Remove(implType);
 					}
 					else
@@ -72,7 +84,7 @@ namespace Hangfire.Dashboard.Management.v2.Pages.Partials
 						string defaultValue = displayInfo.DefaultValue?.ToString();
 
 						//drop down menu for multiple implementations
-						inputs += InputImplsList(myId, displayInfo.CssClasses, labelText, placeholderText, displayInfo.Description, impls, defaultValue, displayInfo.IsDisabled);
+						input += InputImplsList(myId, displayInfo.CssClasses, labelText, placeholderText, displayInfo.Description, impls, defaultValue, displayInfo.IsDisabled);
 
 						//not showing implementations
 						foreach (Type impl in impls)
@@ -80,52 +92,82 @@ namespace Hangfire.Dashboard.Management.v2.Pages.Partials
 							NestedTypes.Add(impl);
 							string dNone = defaultValue != null && impl.Name == defaultValue ? "" : "d-none";
 
-							inputs += $"<div id=\"{myId}_{impl.Name}\" class=\"panel panel-default impl-panels-for-{myId} {dNone}\"><div class=\"panel-heading\" role=\"button\" data-toggle=\"collapse\" href=\"#collapse_{myId}_{impl.Name}\" aria-expanded=\"false\" 	aria-controls=\"collapse_{myId}_{impl.Name}\"><h4 class=\"panel-title\">{impl.Name} {parameterInfo.Name}</h4></div><div id=\"collapse_{myId}_{impl.Name}\" 	class=\"panel-collapse collapse\"><div 	class=\"panel-body\">";
-							inputs += InputNested($"{myId}_{impl.Name}", impl);
+							input += $"<div id=\"{myId}_{impl.Name}\" class=\"panel panel-default impl-panels-for-{myId} {dNone}\"><div class=\"panel-heading\" role=\"button\" data-toggle=\"collapse\" href=\"#collapse_{myId}_{impl.Name}\" aria-expanded=\"false\" 	aria-controls=\"collapse_{myId}_{impl.Name}\"><h4 class=\"panel-title\">{impl.Name} {parameterInfo.Name}</h4></div><div id=\"collapse_{myId}_{impl.Name}\" 	class=\"panel-collapse collapse\"><div 	class=\"panel-body\">";
+							input += InputProps($"{myId}_{impl.Name}", impl, outerDepth);
+							input += "</div></div></div>";
 							NestedTypes.Remove(impl);
 						}
 					}
 				}
-				else if (parameterInfo.ParameterType == typeof(string))
+				else if (rootType == typeof(string))
 				{
-					inputs += InputTextbox(myId, displayInfo.CssClasses, labelText, placeholderText, displayInfo.Description, displayInfo.DefaultValue, displayInfo.IsDisabled, displayInfo.IsRequired, displayInfo.IsMultiLine);
+					input += InputTextbox(myId, displayInfo.CssClasses, labelText, placeholderText, displayInfo.Description, displayInfo.DefaultValue, displayInfo.IsDisabled, displayInfo.IsRequired, displayInfo.IsMultiLine);
 				}
-				else if (parameterInfo.ParameterType == typeof(int))
+				else if (rootType == typeof(int))
 				{
-					inputs += InputNumberbox(myId, displayInfo.CssClasses, labelText, placeholderText, displayInfo.Description, displayInfo.DefaultValue, displayInfo.IsDisabled, displayInfo.IsRequired);
+					input += InputNumberbox(myId, displayInfo.CssClasses, labelText, placeholderText, displayInfo.Description, displayInfo.DefaultValue, displayInfo.IsDisabled, displayInfo.IsRequired);
 				}
-				else if (parameterInfo.ParameterType == typeof(Uri))
+				else if (rootType == typeof(Uri))
 				{
-					inputs += Input(myId, displayInfo.CssClasses, labelText, placeholderText, displayInfo.Description, "url", displayInfo.DefaultValue, displayInfo.IsDisabled, displayInfo.IsRequired);
+					input += Input(myId, displayInfo.CssClasses, labelText, placeholderText, displayInfo.Description, "url", displayInfo.DefaultValue, displayInfo.IsDisabled, displayInfo.IsRequired);
 				}
-				else if (parameterInfo.ParameterType == typeof(DateTime))
+				else if (rootType == typeof(DateTime))
 				{
-					inputs += InputDatebox(myId, displayInfo.CssClasses, labelText, placeholderText, displayInfo.Description, displayInfo.DefaultValue, displayInfo.IsDisabled, displayInfo.IsRequired, displayInfo.ControlConfiguration);
+					input += InputDatebox(myId, displayInfo.CssClasses, labelText, placeholderText, displayInfo.Description, displayInfo.DefaultValue, displayInfo.IsDisabled, displayInfo.IsRequired, displayInfo.ControlConfiguration);
 				}
-				else if (parameterInfo.ParameterType == typeof(bool))
+				else if (rootType == typeof(bool))
 				{
-					inputs += "<br/>" + InputCheckbox(myId, displayInfo.CssClasses, labelText, placeholderText, displayInfo.Description, displayInfo.DefaultValue, displayInfo.IsDisabled);
+					input += "<br/>" + InputCheckbox(myId, displayInfo.CssClasses, labelText, placeholderText, displayInfo.Description, displayInfo.DefaultValue, displayInfo.IsDisabled);
 				}
-				else if (parameterInfo.ParameterType.IsEnum)
+				else if (rootType.IsEnum)
 				{
 					var data = new Dictionary<string, string>();
-					foreach (int v in Enum.GetValues(parameterInfo.ParameterType))
+					foreach (int v in Enum.GetValues(rootType))
 					{
-						data.Add(Enum.GetName(parameterInfo.ParameterType, v), v.ToString());
+						data.Add(Enum.GetName(rootType, v), v.ToString());
 					}
-					inputs += InputDataList(myId, displayInfo.CssClasses, labelText, placeholderText, displayInfo.Description, data, displayInfo.DefaultValue?.ToString(), displayInfo.IsDisabled);
+					input += InputDataList(myId, displayInfo.CssClasses, labelText, placeholderText, displayInfo.Description, data, displayInfo.DefaultValue?.ToString(), displayInfo.IsDisabled);
 				}
-				else if (parameterInfo.ParameterType.IsClass)
+				else if (rootType.IsClass)
 				{
-					inputs += $"<div class=\"panel panel-default\"><div class=\"panel-heading\" role=\"button\" data-toggle=\"collapse\" href=\"#collapse_{myId}\" aria-expanded=\"false\" aria-controls=\"collapse_{myId}\"><h4 class=\"panel-title\">{labelText}</h4></div><div id=\"collapse_{myId}\" class=\"panel-collapse collapse\"><div class=\"panel-body\">";
-					NestedTypes.Add(parameterInfo.ParameterType);
-					inputs += InputNested(myId, parameterInfo.ParameterType);
-					NestedTypes.Remove(parameterInfo.ParameterType);
+					NestedTypes.Add(rootType);
+					input += $"<div class=\"panel panel-default\"><div class=\"panel-heading\" role=\"button\" data-toggle=\"collapse\" href=\"#collapse_{myId}\" aria-expanded=\"false\" aria-controls=\"collapse_{myId}\"><h4 class=\"panel-title\">{labelText}</h4></div><div id=\"collapse_{myId}\" class=\"panel-collapse collapse\"><div class=\"panel-body\">";
+					input += InputProps(myId, rootType, outerDepth);
+					input += "</div></div></div>";
+					NestedTypes.Remove(rootType);
 				}
 				else
 				{
-					inputs += InputTextbox(myId, displayInfo.CssClasses, labelText, placeholderText, displayInfo.Description, displayInfo.DefaultValue, displayInfo.IsDisabled, displayInfo.IsRequired);
+					input += $"<span> Unsupported type: {rootType.Name} </span>";
+					//input += InputTextbox(myId, displayInfo.CssClasses, labelText, placeholderText, displayInfo.Description, displayInfo.DefaultValue, displayInfo.IsDisabled, displayInfo.IsRequired);
 				}
+
+				//wrapper
+				if (isList)
+				{
+					int depthCouter = outerDepth;
+					while (depthCouter > 0)
+					{
+						depthCouter--;
+						labelText = displayInfo.Label == null ? parameterInfo.Name : displayInfo.Label;
+						labelText += ": ";
+						for (int j = 0; j < (outerDepth - depthCouter); j++)
+						{
+							labelText += " Collection of ";
+						}
+						labelText += $" {rootType.Name}";
+
+						if (myId.EndsWith("_list_0"))
+						{
+							myId = myId.Substring(0, myId.Length - "_list_0".Length);
+						}
+
+						input = InputList(myId, input, depthCouter, labelText);
+					}
+					outerDepth = 0;
+				}
+
+				inputs += input;
 			}
 
 			if (string.IsNullOrWhiteSpace(inputs))
@@ -139,7 +181,179 @@ namespace Hangfire.Dashboard.Management.v2.Pages.Partials
 				</div>
 				<div id=""{JobId}_error""></div>
 				<div id=""{JobId}_success""></div>
-");
+			");
+		}
+
+		protected string InputProps(string parentId, Type parentType, int outerDepth)
+		{
+			int innerDepth = outerDepth;
+			string inputs = string.Empty;
+
+			foreach (var propertyInfo in parentType.GetProperties()
+				.Where(prop => Attribute.IsDefined(prop, typeof(DisplayDataAttribute))))
+			{
+				var input = string.Empty;
+				var myId = $"{parentId}_{propertyInfo.Name}";
+				var propDisplayInfo = propertyInfo.GetCustomAttribute<DisplayDataAttribute>() ?? new DisplayDataAttribute();
+				var labelText = propDisplayInfo.Label ?? propertyInfo.Name;
+
+				bool isList = false;
+				Type rootType = propertyInfo.PropertyType;
+				List<Type> innerTypes = new List<Type>();
+
+				//iterate until (List<List<...<Concrete>> we found a Concrete Type, then processit, at the end we will wrap n-depth times in a panel List
+				while (rootType.IsGenericType && rootType.GetGenericTypeDefinition() == typeof(List<>))
+				{
+					innerDepth++;
+					var elementType = rootType.GetGenericArguments().ToList().FirstOrDefault();
+					isList = true;
+					myId += "_list_0";
+					rootType = elementType;
+					labelText = rootType.Name + " (Element)";
+				}
+
+				if (rootType.IsInterface)
+				{
+					if (!VT.Implementations.ContainsKey(rootType)) { input += $"<span>No concrete implementation of \"{rootType}\" found in the current assembly.</span>"; continue; }
+
+					var impls = VT.Implementations[rootType];
+
+					if (impls.Count == 1)
+					{
+						var implType = impls.First();
+						NestedTypes.Add(implType);
+						input += $"<div class=\"panel panel-default\"><div class=\"panel-heading\" role=\"button\" data-toggle=\"collapse\" href=\"#collapse_{myId}_{implType.Name}\" aria-expanded=\"false\" 	aria-controls=\"collapse_{myId}_{implType.Name}\"><h4 class=\"panel-title\">{implType.Name}</h4></div><div id=\"collapse_{myId}_{implType.Name}\" class=\"panel-collapse collapse\"><div class=\"panel-body\">";
+						input += InputProps($"{myId}_{implType.Name}", implType, innerDepth);
+						input += "</div></div></div>";
+						NestedTypes.Remove(implType);
+					}
+					else
+					{
+						var filteredImpls = new HashSet<Type>(impls.Where(impl => !NestedTypes.Contains(impl)));
+						string defaultValue = propDisplayInfo.DefaultValue?.ToString();
+
+						//drop down menu
+						input += InputImplsList(myId, propDisplayInfo.CssClasses, labelText, propDisplayInfo.Placeholder, propDisplayInfo.Description, filteredImpls, defaultValue, propDisplayInfo.IsDisabled);
+
+						//implementations
+						foreach (Type impl in impls)
+						{
+							string dNone = defaultValue != null && impl.Name == defaultValue ? "" : "d-none";
+
+							if (!NestedTypes.Add(impl)) { input += null; continue; } //Circular reference, not allowed -> null
+							input += $"<div id=\"{myId}_{impl.Name}\" class=\"panel panel-default impl-panels-for-{myId} {dNone}\"><div class=\"panel-heading\" role=\"button\" data-toggle=\"collapse\" href=\"#collapse_{myId}_{impl.Name}\" aria-expanded=\"false\" 	aria-controls=\"collapse_{myId}_{impl.Name}\"><h4 class=\"panel-title\">{impl.Name} {propertyInfo.Name}</h4></div><div id=\"collapse_{myId}_{impl.Name}\" 	class=\"panel-collapse collapse\"><div 	class=\"panel-body\">";
+							input += InputProps($"{myId}_{impl.Name}", impl, innerDepth);
+							input += "</div></div></div>";
+							NestedTypes.Remove(impl);
+						}
+					}
+				}
+				else if (rootType == typeof(string))
+				{
+					input += InputTextbox(myId, propDisplayInfo.CssClasses, labelText, propDisplayInfo.Placeholder, propDisplayInfo.Description, propDisplayInfo.DefaultValue, propDisplayInfo.IsDisabled, propDisplayInfo.IsRequired, propDisplayInfo.IsMultiLine);
+				}
+				else if (rootType == typeof(int))
+				{
+					input += InputNumberbox(myId, propDisplayInfo.CssClasses, labelText, propDisplayInfo.Placeholder, propDisplayInfo.Description, propDisplayInfo.DefaultValue, propDisplayInfo.IsDisabled, propDisplayInfo.IsRequired);
+				}
+				else if (rootType == typeof(Uri))
+				{
+					input += Input(myId, propDisplayInfo.CssClasses, labelText, propDisplayInfo.Placeholder, propDisplayInfo.Description, "url", propDisplayInfo.DefaultValue, propDisplayInfo.IsDisabled, propDisplayInfo.IsRequired);
+				}
+				else if (rootType == typeof(DateTime))
+				{
+					input += InputDatebox(myId, propDisplayInfo.CssClasses, labelText, propDisplayInfo.Placeholder, propDisplayInfo.Description, propDisplayInfo.DefaultValue, propDisplayInfo.IsDisabled, propDisplayInfo.IsRequired, propDisplayInfo.ControlConfiguration);
+				}
+				else if (rootType == typeof(bool))
+				{
+					input += "<br/>" + InputCheckbox(myId, propDisplayInfo.CssClasses, labelText, propDisplayInfo.Placeholder, propDisplayInfo.Description, propDisplayInfo.DefaultValue, propDisplayInfo.IsDisabled);
+				}
+				else if (rootType.IsEnum)
+				{
+					var data = new Dictionary<string, string>();
+					foreach (int v in Enum.GetValues(rootType))
+					{
+						data.Add(Enum.GetName(rootType, v), v.ToString());
+					}
+					input += InputDataList(myId, propDisplayInfo.CssClasses, labelText, propDisplayInfo.Placeholder, propDisplayInfo.Description, data, propDisplayInfo.DefaultValue?.ToString(), propDisplayInfo.IsDisabled);
+				}
+				else if (rootType.IsClass)
+				{
+					if (!NestedTypes.Add(rootType)) { input += null; continue; } //Circular reference, not allowed -> null
+					input += $"<div class=\"panel panel-default\"><div class=\"panel-heading\" role=\"button\" data-toggle=\"collapse\" href=\"#collapse_{myId}\" aria-expanded=\"false\" aria-controls=\"collapse_{myId}\"><h4 class=\"panel-title\">{labelText}</h4></div><div id=\"collapse_{myId}\" class=\"panel-collapse collapse\"><div class=\"panel-body\">";
+					input += InputProps(myId, rootType, innerDepth);
+					input += "</div></div></div>";
+					NestedTypes.Remove(rootType);
+				}
+				else
+				{
+					input += InputTextbox(myId, propDisplayInfo.CssClasses, labelText, propDisplayInfo.Placeholder, propDisplayInfo.Description, propDisplayInfo.DefaultValue, propDisplayInfo.IsDisabled, propDisplayInfo.IsRequired);
+				}
+				
+				//wrapper
+				if (isList)
+				{
+					int depthCouter = innerDepth;
+					while (depthCouter > outerDepth)
+					{
+						depthCouter--;
+						labelText = propDisplayInfo.Label == null ? propertyInfo.Name : propDisplayInfo.Label;
+						labelText += ": ";
+						for (int j = 0; j < (innerDepth - depthCouter); j++)
+						{
+							labelText += " Collection of ";
+						}
+						labelText += $" {rootType.Name}";
+
+						if (myId.EndsWith("_list_0"))
+						{
+							myId = myId.Substring(0, myId.Length - "_list_0".Length);
+						}
+
+						input = InputList(myId, input, depthCouter, labelText);
+					}
+					innerDepth = outerDepth; //reset depth on the parent level
+				}
+
+				inputs += input;
+			}
+
+			if (string.IsNullOrWhiteSpace(inputs))
+			{
+				inputs = "<span>This Nested Type does not require inputs</span>";
+			}
+
+			return inputs;
+		}
+
+		protected string InputList(string myId, string nestedInput, int depth, string labelText)
+		{
+					return $@"
+					<div class=""panel panel-default"">
+						<div class=""panel-heading"" role=""button"" data-toggle=""collapse"" href=""#collapse_{myId}"" aria-expanded=""false"" aria-controls=""collapse_{myId}"">
+							<h4 class=""panel-title"">{labelText}</h4>
+						</div>
+						<div id=""collapse_{myId}"" class=""panel-collapse collapse"">
+							<div id=""{myId}"" class=""panel-body list-element-container"" data-list-length=""0"">
+								<!-- ELEMENT -->
+								<div data-index=0 data-depth={depth} class=""d-none"">
+									<div class=""content col-xs-11"">
+										<!-- CONTENT -->
+										{nestedInput}
+									</div>
+									<div class=""col-xs-1 pr-0"">
+										<button type=""button"" class=""element-deleter btn btn-sm"">
+											<i class=""fas fa-trash""></i>
+										</button>
+									</div>
+								</div>
+								<button type=""button"" class=""btn btn-sm element-adder"">
+    								<i class=""fas fa-plus""></i>
+								</button>
+							</div>
+						</div>
+					</div>
+					";
 		}
 
 		protected string Input(string id, string cssClasses, string labelText, string placeholderText, string descriptionText, string inputtype, object defaultValue = null, bool isDisabled = false, bool isRequired = false)
@@ -225,7 +439,7 @@ namespace Hangfire.Dashboard.Management.v2.Pages.Partials
 			var initText = defaultValue != null ? defaultValue : !string.IsNullOrWhiteSpace(placeholderText) ? placeholderText : "Select a value";
 			var initValue = defaultValue != null && data.ContainsKey(defaultValue) ? data[defaultValue].ToString() : "";
 			var output = $@"
-<div class=""{cssClasses}"">
+<div class=""pb-1 {cssClasses}"">
 	<label class=""control-label"">{labelText}</label>
 	<div class=""dropdown"">
 		<button id=""{id}"" class=""hdm-job-input hdm-input-datalist btn btn-default dropdown-toggle input-control-data-list"" type=""button"" data-selectedvalue=""{initValue}"" data-toggle=""dropdown"" aria-haspopup=""true"" aria-expanded=""false"" {(isDisabled ? "disabled='disabled'" : "")}>
@@ -289,99 +503,5 @@ namespace Hangfire.Dashboard.Management.v2.Pages.Partials
 
             return output;
         }
-
-		protected string InputNested(string parentId, Type parentType)
-		{
-			string input = string.Empty;
-
-			foreach (var propertyInfo in parentType.GetProperties()
-				.Where(prop => Attribute.IsDefined(prop, typeof(DisplayDataAttribute))))
-			{
-				var propId = $"{parentId}_{propertyInfo.Name}";
-				var propDisplayInfo = propertyInfo.GetCustomAttribute<DisplayDataAttribute>() ?? new DisplayDataAttribute();
-
-				var propLabelText = propDisplayInfo?.Label ?? propertyInfo.Name;
-				var propPlaceholderText = propDisplayInfo?.Placeholder ?? propertyInfo.Name;
-
-								if(propertyInfo.PropertyType.IsInterface)
-				{
-					if (!VT.Implementations.ContainsKey(propertyInfo.PropertyType)) { input += $"<span>No concrete implementation of \"{propertyInfo.PropertyType}\" found in the current assembly.</span>"; continue; }
-
-					var impls = VT.Implementations[propertyInfo.PropertyType];
-
-					if (impls.Count == 1)
-					{
-						var implType = impls.First();
-						NestedTypes.Add(implType);
-						input += $"<div class=\"panel panel-default\"><div class=\"panel-heading\" role=\"button\" data-toggle=\"collapse\" href=\"#collapse_{propId}_{implType.Name}\" aria-expanded=\"false\" 	aria-controls=\"collapse_{propId}_{implType.Name}\"><h4 class=\"panel-title\">{implType.Name}</h4></div><div id=\"collapse_{propId}_{implType.Name}\" class=\"panel-collapse collapse\"><div 	class=\"panel-body\">";
-						input += InputNested($"{propId}_{implType.Name}", implType);
-						NestedTypes.Remove(implType);
-					}
-					else
-					{
-						var filteredImpls = new HashSet<Type>(impls.Where(impl => !NestedTypes.Contains(impl)));
-						string defaultValue = propDisplayInfo.DefaultValue?.ToString();
-
-						//drop down menu
-						input += InputImplsList(propId, propDisplayInfo.CssClasses, propDisplayInfo.Label, propPlaceholderText, propDisplayInfo.Description, filteredImpls, defaultValue, propDisplayInfo.IsDisabled);
-
-						//implementations
-						foreach (Type impl in impls)
-						{
-							string dNone = defaultValue != null && impl.Name == defaultValue ? "" : "d-none";
-
-							if (!NestedTypes.Add(impl)) { input += null; continue; } //Circular reference, not allowed -> null
-							input += $"<div id=\"{propId}_{impl.Name}\" class=\"panel panel-default impl-panels-for-{propId} {dNone}\"><div class=\"panel-heading\" role=\"button\" data-toggle=\"collapse\" href=\"#collapse_{propId}_{impl.Name}\" aria-expanded=\"false\" 	aria-controls=\"collapse_{propId}_{impl.Name}\"><h4 class=\"panel-title\">{impl.Name} {propertyInfo.Name}</h4></div><div id=\"collapse_{propId}_{impl.Name}\" 	class=\"panel-collapse collapse\"><div 	class=\"panel-body\">";
-							input += InputNested($"{propId}_{impl.Name}", impl);
-							NestedTypes.Remove(impl);
-						}
-					}
-				}
-				else if (propertyInfo.PropertyType == typeof(string))
-				{
-					input += InputTextbox(propId, propDisplayInfo.CssClasses, propLabelText, propPlaceholderText, propDisplayInfo.Description, propDisplayInfo.DefaultValue, propDisplayInfo.IsDisabled, propDisplayInfo.IsRequired, propDisplayInfo.IsMultiLine);
-				}
-				else if (propertyInfo.PropertyType == typeof(int))
-				{
-					input += InputNumberbox(propId, propDisplayInfo.CssClasses, propLabelText, propPlaceholderText, propDisplayInfo.Description, propDisplayInfo.DefaultValue, propDisplayInfo.IsDisabled, propDisplayInfo.IsRequired);
-				}
-				else if (propertyInfo.PropertyType == typeof(Uri))
-				{
-					input += Input(propId, propDisplayInfo.CssClasses, propLabelText, propPlaceholderText, propDisplayInfo.Description, "url", propDisplayInfo.DefaultValue, propDisplayInfo.IsDisabled, propDisplayInfo.IsRequired);
-				}
-				else if (propertyInfo.PropertyType == typeof(DateTime))
-				{
-					input += InputDatebox(propId, propDisplayInfo.CssClasses, propLabelText, propPlaceholderText, propDisplayInfo.Description, propDisplayInfo.DefaultValue, propDisplayInfo.IsDisabled, propDisplayInfo.IsRequired, propDisplayInfo.ControlConfiguration);
-				}
-				else if (propertyInfo.PropertyType == typeof(bool))
-				{
-					input += "<br/>" + InputCheckbox(propId, propDisplayInfo.CssClasses, propLabelText, propPlaceholderText, propDisplayInfo.Description, propDisplayInfo.DefaultValue, propDisplayInfo.IsDisabled);
-				}
-				else if (propertyInfo.PropertyType.IsEnum)
-				{
-					var data = new Dictionary<string, string>();
-					foreach (int v in Enum.GetValues(propertyInfo.PropertyType))
-					{
-						data.Add(Enum.GetName(propertyInfo.PropertyType, v), v.ToString());
-					}
-					input += InputDataList(propId, propDisplayInfo.CssClasses, propLabelText, propPlaceholderText, propDisplayInfo.Description, data, propDisplayInfo.DefaultValue?.ToString(), propDisplayInfo.IsDisabled);
-				}
-				else if (propertyInfo.PropertyType.IsClass)
-				{
-					if (!NestedTypes.Add(propertyInfo.PropertyType)) { input += null;  continue; } //Circular reference, not allowed -> null
-					input += $"<div class=\"panel panel-default\"><div class=\"panel-heading\" role=\"button\" data-toggle=\"collapse\" href=\"#collapse_{propId}\" aria-expanded=\"false\" aria-controls=\"collapse_{propId}\"><h4 class=\"panel-title\">{propLabelText}</h4></div><div id=\"collapse_{propId}\" class=\"panel-collapse collapse\"><div class=\"panel-body\">";
-					input += InputNested(propId, propertyInfo.PropertyType);
-					NestedTypes.Remove(propertyInfo.PropertyType);
-				}
-				else
-				{
-					input += InputTextbox(propId, propDisplayInfo.CssClasses, propLabelText, propPlaceholderText, propDisplayInfo.Description, propDisplayInfo.DefaultValue, propDisplayInfo.IsDisabled, propDisplayInfo.IsRequired);
-				}
-			}
-
-			input += "</div></div></div>";
-			return input;
-		}
-
 	}
 }
