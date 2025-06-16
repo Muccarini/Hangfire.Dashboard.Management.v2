@@ -17,41 +17,62 @@ namespace Hangfire.Dashboard.Management.v2.Support
 		{
 			JobsHelper.Metadata.ForEach(job => job.MethodInfo.GetParameters().ToList().ForEach(param => RegisterInterfaceImpls(assembly, param.ParameterType)));
 		}
-		
-		private static void RegisterInterfaceImpls(Assembly assembly, Type interfaceType)
-		{
-			// this is only needed for interfaces
-			if (!interfaceType.IsInterface) return;
 
-			// init collection if null
-			if (!Implementations.ContainsKey(interfaceType))
+		// it get all interfaces from a type, including generic parameters interfaces.
+		private static List<Type> GetGenericParamInterface(Type parameterType)
+		{
+			List<Type> interfaces = new List<Type>();
+
+			if (parameterType.IsInterface)
 			{
-				Implementations[interfaceType] = new HashSet<Type>();
+				interfaces.Add(parameterType);
+			}
+			if (parameterType.IsGenericType)
+			{
+				parameterType.GetGenericArguments().ToList().ForEach(arg => {
+					GetGenericParamInterface(arg)
+					.Where(i => !interfaces.Contains(i)).ToList()
+					.ForEach(i => interfaces.Add(i));
+				});
 			}
 
-			RegisterImplementations(assembly, interfaceType);
+			return interfaces;
+		}
+		
+		private static void RegisterInterfaceImpls(Assembly assembly, Type parameterType)
+		{
+			GetGenericParamInterface(parameterType).ForEach(i =>
+			{
+				if (Implementations.ContainsKey(i))
+				{
+					RegisterImplementations(assembly, i);
+				}
+				else
+				{
+					Implementations[i] = new HashSet<Type>();
+					RegisterImplementations(assembly, i);
+				}
+			});
 		}
 
-		// recursive
 		private static void RegisterImplementations(Assembly assembly, Type interfaceType)
 		{
 			var dictList = Implementations[interfaceType];
-
-			// get impls
 			var implementations = GetInterfaceImplementations(assembly, interfaceType).ToList();
 
 			foreach (var impl in implementations)
 			{
-				// register impl
-				if (!dictList.Contains(impl)) dictList.Add(impl);
+				if (!dictList.Contains(impl))
+					dictList.Add(impl);
 
 				// get nested interfaces
+				//non direct circular reference are avoided during serialization, not needed here?
 				var nestedInterfaces = GetInterfacePropsFromType(impl)
-					.Where(i => i != interfaceType) // avoids circular refferences
+					.Where(i => i != interfaceType) // avoids direct circular references.
 					.ToList();
 
-				// register nested interfaces
-				foreach (var nestedInterface in nestedInterfaces) RegisterInterfaceImpls(assembly, nestedInterface);
+				foreach (var nestedInterface in nestedInterfaces)
+					RegisterInterfaceImpls(assembly, nestedInterface);
 			}
 		}
 
@@ -64,6 +85,7 @@ namespace Hangfire.Dashboard.Management.v2.Support
 		}
 
 		// gets all concrete impls of given interface
-		private static IEnumerable<Type> GetInterfaceImplementations(Assembly assembly, Type interfaceType) => assembly.GetTypes().Where(t => interfaceType.IsAssignableFrom(t) && !t.IsInterface);
+		private static IEnumerable<Type> GetInterfaceImplementations(Assembly assembly, Type interfaceType) =>
+			assembly.GetTypes().Where(t => interfaceType.IsAssignableFrom(t) && !t.IsInterface);
 	}
 }

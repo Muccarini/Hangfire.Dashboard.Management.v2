@@ -9,67 +9,218 @@
 				$(this).hide().removeClass('hide');
 			})
 
-			let defaultTempusDominusOptions = { localization: tempusDominus.DefaultOptions.localization }
-			let controlConfigs = $("#hdmConfig").data("controlconfigs");
-			if (controlConfigs) {
-				if (controlConfigs.dateTimeOpts) {
-					if (controlConfigs.dateTimeOpts.locale !== 'default') {
-						if (tempusDominus.locales[controlConfigs.dateTimeOpts.locale]) {
-							tempusDominus.DefaultOptions.localization = $.extend(tempusDominus.DefaultOptions.localization, tempusDominus.locales[controlConfigs.dateTimeOpts.locale].localization);
+			InitializeTD(this);
+		
+			function InitializeTD($scope){
+				let defaultTempusDominusOptions = { localization: tempusDominus.DefaultOptions.localization }
+				let controlConfigs = $("#hdmConfig").data("controlconfigs");
+				if (controlConfigs) {
+					if (controlConfigs.dateTimeOpts) {
+						if (controlConfigs.dateTimeOpts.locale !== 'default') {
+							if (tempusDominus.locales[controlConfigs.dateTimeOpts.locale]) {
+								tempusDominus.DefaultOptions.localization = $.extend(tempusDominus.DefaultOptions.localization, tempusDominus.locales[controlConfigs.dateTimeOpts.locale].localization);
+							}
 						}
 					}
 				}
+
+				$("div[id$='_datetimepicker']").each(function () {
+					let tdElement = $(this)
+
+					let options = tdElement.data('td_options');
+
+					let tdInput = $(this).find('input')
+
+					if (tdInput) {
+						let defaultVal = tdElement.data('td_value');
+						let td;
+
+						td = new tempusDominus.TempusDominus(this);
+
+						if (options) {
+							//console.log('Found Options: ', options)
+							if (options.localization) {
+								//console.log('Old Localization: ', options.localization);
+								let newLocalization = $.extend({}, tempusDominus.DefaultOptions.localization, options.localization);
+								options.localization = newLocalization;
+								//console.log('New Localization: ', options.localization);
+							}
+							td.updateOptions(options, true);
+						}
+
+						tdElement
+							.on('change.td', function (tdEvent) {
+								//console.log(tdEvent.date.toISOString())
+								if (tdEvent.date) {
+									tdElement.data('date', tdEvent.date.toISOString());
+									tdElement.attr('date', tdEvent.date.toISOString());
+								}
+								else {
+									tdElement.data('date', null);
+									tdElement.attr('date', null);
+								}
+							})
+							.on('error.td', function (tdEvent) {
+								console.error('Error from Tempus Dominus : ', tdEvent)
+							});
+
+						if (defaultVal) {
+							let parsedDateTime = td.dates.parseInput(defaultVal);
+							if (tempusDominus.DateTime.isValid(parsedDateTime)) {
+								td.dates.setFromInput(parsedDateTime);
+							}
+						}
+					}
+				});
+
+				$('input.time[data-inputmask]').each(function () {
+					Inputmask($(this).data('inputmask')).mask(this);
+				});
 			}
-			$("div[id$='_datetimepicker']").each(function () {
-				let tdElement = $(this)
 
-				let options = tdElement.data('td_options');
+  			$('.panel-body.list-element-container').on('click', '.element-adder', function (e) {
+				e.stopPropagation();
+  			  	var $elementContainer = $(this).closest('.panel-body.list-element-container');
+  			  	var $elements = $elementContainer.children('[data-index]:not(.d-none)');
+  			  	var $template = $elementContainer.children('[data-index="0"]');
+			
+  			  	if ($elements.length === 0) {
+  			  	  $template.removeClass('d-none');
+  			  	} else {
+  			  	  addListElement($elementContainer, $elements.length);
+  			  	}
 
-				let tdInput = $(this).find('input')
+			  	updateListLength($elementContainer);
+  			});
+		
+  			$('.panel-body.list-element-container').on('click', '.element-deleter', function () {
+  			  var $elementContainer = $(this).closest('.panel-body.list-element-container');
+  			  var $elements = $elementContainer.children('[data-index]');
+  			  var $elementToDelete = $(this).closest('[data-index]');
+  			  if ($elements.length === 1) {
+  			    $elementToDelete.addClass('d-none');
+  			  } else {
+				var deletedIndex = parseInt($elementToDelete.attr('data-index'), 10);
+    			$elementToDelete.remove();
+    			$elements.each(function () {
+					var $el = $(this);
+    			  var idx = parseInt($el.attr('data-index'), 10);
+    			  if (idx > deletedIndex) {
+					isLast = (idx === $elements.length - 1) ? true : false;
+    			    updateListElementIndex($el, idx - 1, isLast);
+    			  }
+    			});
+  			  }
+			  updateListLength($elementContainer);
+  			});
 
-				if (tdInput) {
-					let defaultVal = tdElement.data('td_value');
-					let td;
+			function addListElement($container, index) {
+			  var $last = $container.children('[data-index]:not(.d-none)').last();
+			  var $clone = $last.clone(false, true);
+			  updateListElementIndex($clone, index, true);
+			  $last.after($clone);
+			  InitializeTD($clone);
+			}
 
-					td = new tempusDominus.TempusDominus(this);
+			function replaceListIndexAtDepth(str, newIndex, depth) {
+			  const matches = [...str.matchAll(/(_list_)(\d+)/g)];
+			  if (matches.length < depth) return str;
+			  const match = matches[depth];
+			  if (!match) return str;
+			  return (
+			    str.slice(0, match.index) +
+			    match[1] + newIndex +
+			    str.slice(match.index + match[0].length)
+			  );
+			}
 
-					if (options) {
-						//console.log('Found Options: ', options)
-						if (options.localization) {
-							//console.log('Old Localization: ', options.localization);
-							let newLocalization = $.extend({}, tempusDominus.DefaultOptions.localization, options.localization);
-							options.localization = newLocalization;
-							//console.log('New Localization: ', options.localization);
-						}
-						td.updateOptions(options, true);
-					}
+			function updateListLength($elementsContainer) {
+    			var count = $elementsContainer.children('[data-index]').not('.d-none').length;
+    			$elementsContainer.attr('data-list-length', count);
+			}
 
-					tdElement
-						.on('change.td', function (tdEvent) {
-							//console.log(tdEvent.date.toISOString())
-							if (tdEvent.date) {
-								tdElement.data('date', tdEvent.date.toISOString());
-							}
-							else {
-								tdElement.data('date', null);
-							}
-						})
-						.on('error.td', function (tdEvent) {
-							console.error('Error from Tempus Dominus : ', tdEvent)
-						});
+			function updateListElementIndex($element, index) {
+			  	var depth = parseInt($element.attr('data-depth'), 10);
+			  	$element.attr('data-index', index);
+			
+			  	// ID 
+			  	$element.find('[id]').each(function () {
+			  	  var $el = $(this);
+			  	  var id = $el.attr('id');
+			  	  if (!id) return;
+			  	  var newId = replaceListIndexAtDepth(id, index, depth);
+			  	  $el.attr('id', newId);
+			  	});
+		  
+			  	// NAME
+			  	$element.find('[name]').each(function () {
+			  	  var $el = $(this);
+			  	  var name = $el.attr('name');
+			  	  if (!name) return;
+			  	  var newName = replaceListIndexAtDepth(name, index, depth);
+			  	  $el.attr('name', newName);
+			  	});
+		  
+			  	// FOR
+			  	$element.find('label[for]').each(function () {
+			  	  var $el = $(this);
+			  	  var labelFor = $el.attr('for');
+			  	  if (!labelFor) return;
+			  	  var newFor = replaceListIndexAtDepth(labelFor, index, depth);
+			  	  $el.attr('for', newFor);
+			  	});
 
-					if (defaultVal) {
-						let parsedDateTime = td.dates.parseInput(defaultVal);
-						if (tempusDominus.DateTime.isValid(parsedDateTime)) {
-							td.dates.setFromInput(parsedDateTime);
-						}
-					}
-				}
-			});
+			  	// data-index
+			  	$element.children('[data-index]').each(function () {
+			  	  $(this).attr('data-index', index);
+			  	});
 
-			$('input.time[data-inputmask]').each(function () {
-				Inputmask($(this).data('inputmask')).mask(this);
-			});
+				//class
+				$element.find('[class]').each(function () {
+				    var $el = $(this);
+				    var classList = $el.attr('class');
+				    if (classList && /_list_\d+/.test(classList)) {
+				        $el.attr('class', replaceListIndexAtDepth(classList, index, depth));
+				    }
+				});
+
+				$element.find('ul[data-optionsid]').each(function () {
+				  var $el = $(this);
+				  var optsId = $el.attr('data-optionsid');
+				  if (optsId) $el.attr('data-optionsid', replaceListIndexAtDepth(optsId, index, depth));
+				});
+
+				$element.find('ul[aria-labelledby]').each(function () {
+				  var $el = $(this);
+				  var labelledBy = $el.attr('aria-labelledby');
+				  if (labelledBy) $el.attr('aria-labelledby', replaceListIndexAtDepth(labelledBy, index, depth));
+				});
+
+				$element.find('span.input-data-list-text').each(function () {
+				  var $el = $(this);
+				  var classList = $el.attr('class');
+				  if (classList) $el.attr('class', replaceListIndexAtDepth(classList, index, depth));
+				});
+
+				$element.find('a[data-target-panel-id]').each(function () {
+				  var $el = $(this);
+				  var targetPanelId = $el.attr('data-target-panel-id');
+				  if (targetPanelId) $el.attr('data-target-panel-id', replaceListIndexAtDepth(targetPanelId, index, depth));
+				});
+		  
+			  	$element.find('.panel-heading[role="button"]').each(function () {
+			  	  var href = $(this).attr('href');
+			  	  if (href) {
+			  	    var newHref = replaceListIndexAtDepth(href, index, depth);
+			  	    $(this).attr('href', newHref);
+			  	  }
+			  	  var ariaControls = $(this).attr('aria-controls');
+			  	  if (ariaControls) {
+			  	    var newAria = replaceListIndexAtDepth(ariaControls, index, depth);
+			  	    $(this).attr('aria-controls', newAria);
+			  	  }
+			  	});
+			}
 
 			$('.hdm-management').each(function () {
 				var container = this;
@@ -88,7 +239,6 @@
 				var $this = $(this);
 				var id = $this.data("id");
 
-				//handler for implementation selector dropdown
                 $(this).on('click', '.impl-selector-options .option', function (e) {
                     e.preventDefault();
                     var $option = $(this);
@@ -100,7 +250,8 @@
                     var $button = $('#' + optionsId + '.hdm-impl-selector-button', container);
 
                     $button.find('.input-data-list-text').text(optionText);
-                    $button.data('selectedvalue', optionValue); 
+					$button.data('selectedvalue', optionValue); 
+					$button.attr('data-selectedvalue', optionValue);
 
                     $('.impl-panels-for-' + optionsId, container).addClass('d-none');
 
@@ -121,9 +272,11 @@
 						var $button = $('#' + optionsId, container);
 
 						$button.data('selectedvalue', optionValue);
+						$button.attr('data-selectedvalue', optionValue);
 						$button.find('.input-data-list-text').text(optionText);
 
 					});
+
 				$(this).on('click', '.commands-type',
 					function (e) {
 						var $this = $(this);
@@ -141,7 +294,15 @@
 						var type = $this.attr("input-type");
 						var send = { id: id, type: type };
 
-						// Get all non-System control values
+						$('.list-element-container', container).each(function() {
+						    var $list = $(this);
+						    var listId = $list.attr('id');
+						    var listLength = $list.attr('data-list-length');
+						    if (listId && listLength !== undefined) {
+						        send[listId] = listLength;
+						    }
+						});
+
 						$("input.hdm-job-input.hdm-input-checkbox[id^='" + id + "']", container).each(function () {
 							//console.log('Reading Checkbox Input: ' + $(this).prop('id') + ' => ' + $(this).is(':checked'));
 
@@ -149,10 +310,12 @@
 								send[$(this).prop('id')] = "on";
 							}
 						});
+
 						$("input.hdm-job-input.hdm-input-text[id^='" + id + "']", container).each(function () {
 							//console.log('Reading Text Input: ' + $(this).prop('id') + ' => ' + $(this).val());
 							send[$(this).prop('id')] = $(this).val();
 						});
+
 						$("input.hdm-job-input.hdm-input-number[id^='" + id + "']", container).each(function () {
 							//console.log('Reading Number Input: ' + $(this).prop('id') + ' => ' + $(this).val());
 							send[$(this).prop('id')] = $(this).val();
@@ -162,6 +325,7 @@
 							//console.log('Reading TextArea Input: ' + $(this).prop('id') + ' => ' + $(this).val());
 							send[$(this).prop('id')] = $(this).val();
 						});
+
 						$("select.hdm-job-input[id^='" + id + "']", container).each(function () {
 							//console.log('Reading Select Input: ' + $(this).prop('id') + ' => ' + $(this).val());
 							send[$(this).prop('id')] = $(this).val();
@@ -169,12 +333,14 @@
 
 						$(".hdm-job-input.hdm-input-datalist[id^='" + id + "']", container).each(function () {
 							//console.log('Reading DataList Input: ' + $(this).prop('id') + ' => ' + $(this).data('selectedvalue'));
-							send[$(this).prop('id')] = $(this).data('selectedvalue');
+							//send[$(this).prop('id')] = $(this).data('selectedvalue'); //this does not work after cloning.
+							send[$(this).prop('id')] = $(this).attr('data-selectedvalue'); //change name
 						});
 
 						$("div.hdm-job-input-container.hdm-input-date-container[id^='" + id + "']", container).each(function () {
 							//console.log('Reading Date Input: ' + $(this).prop('id') + ' => ' + $(this).data('date'));
-							send[$(this).prop('id')] = $(this).data('date');
+							//send[$(this).prop('id')] = $(this).data('date');
+							send[$(this).prop('id')] = $(this).attr('date');
 						});
 
 
